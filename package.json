@@ -1,8 +1,8 @@
 {
   "name": "hello-pear-react-native",
   "productName": "HelloPear",
-  "version": "0.0.0-rc.0",
-  "upgrade": "pear://<YOUR_KEY_HERE>",
+  "version": "1.0.0",
+  "upgrade": "pear://trkmjjizcxxym714pnkkzorxucxkre5bacib8mbdc9f1szi8g9ko",
   "main": "index.ts",
   "scripts": {
     "inline-worker": "inline-worker-module hello-pear-worker",
@@ -15,6 +15,7 @@
     "update": "npm run bundle:bare && npm run bundle:react-native && npm run build",
     "prebuild": "npx expo prebuild",
     "ios": "node scripts/check-upgrade.js && expo run:ios",
+    "ios:iphone8": "node scripts/check-upgrade.js && expo run:ios --device iPhone8",
     "android": "node scripts/check-upgrade.js && expo run:android",
     "production:ios": "npm run ios -- --configuration Release",
     "production:android": "npm run android -- --variant release",
@@ -35,6 +36,8 @@
   "homepage": "https://github.com/holepunchto/hello-pear-react-native",
   "dependencies": {
     "b4a": "^1.8.0",
+    "bare-crypto": "^1.12.0",
+    "bare-os": "^3.0.1",
     "bare-path": "^3.1.2",
     "bare-storage": "^1.1.1",
     "corestore": "^7.16.1",

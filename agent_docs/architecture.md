@@ -32,16 +32,13 @@ facts.
   `react-native-b4a` is not installed. `FramedStream` itself needs no mobile variant: it
   only depends on `streamx` and `b4a`, and the BareKit IPC object already is a `streamx`
   Duplex.
-- `workers/main.js` is a one-line `require('hello-pear-worker')`. That package's
-  `package.json#imports` maps the specifier `pear-runtime` to `pear-mobile` under the
-  `ios`/`android`/`simulator` conditions and to desktop `pear-runtime` otherwise, which
-  is how one worker body serves both this repo and hello-pear-electron. `bare-pack`
-  resolves the condition at bundle time — the emitted `src/worker.bundle.js` contains
-  `node_modules/pear-mobile/bare.js` and no desktop `pear-runtime`.
-- **Because the worker lives in a package, it resolves against that package's
-  `package.json`, not this one.** To develop the worker in-project instead, copy
-  `hello-pear-worker/index.js` into `workers/main.js`; its Node-builtin usage then needs
-  an `imports` entry here, and its dependencies become this repo's dependencies.
+- `workers/main.js` is the in-repo worker (forked from `hello-pear-worker` plus a
+  Hyperswarm chat topic matching [pear-chat](https://github.com/holepunchto/pear-chat)).
+  This repo's `package.json#imports` maps `pear-runtime` to `pear-mobile` under the
+  `ios`/`android`/`simulator` conditions. `bare-pack` resolves the condition at bundle
+  time — the emitted `src/worker.bundle.js` contains `node_modules/pear-mobile/bare.js`.
+- Worker dependencies are declared in this repo's `package.json`, not in a separate
+  worker package.
 - `bare-pack` runs with `--linked` and four `--host` targets, so native addons resolve
   to `linked:` specifiers. `npm run link` uses `bare-link` to supply matching
   `.xcframework` and `.so` addons in
@@ -62,10 +59,13 @@ facts.
   starts another worklet against the same storage directory, so two Corestores contend
   for the same files. Restart the app rather than trusting a hot reload when debugging
   worker behavior.
-- The pipe protocol is plain UTF-8 strings matched by exact equality. The worker
-  `console.log`s any frame it does not recognize; `App.tsx` silently drops any frame it
-  does not recognize, including the `Hello from worker` greeting the worker sends on
-  every boot.
+- The pipe carries **two protocols on one `FramedStream`:** OTA frames are plain UTF-8
+  strings matched by exact equality (`updating`, `updated`, `minver-required`,
+  `pear:applyUpdate`, `pear:updateApplied`). Chat uses JSON lines (`{ type: 'ready' }`,
+  `{ type: 'peers', count }`, `{ type: 'message', from, text }` from the worker;
+  `{ type: 'chat:send', text }` from the app). `App.tsx` tries JSON chat parsing first,
+  then OTA string handling. Unrecognized worker frames are still `console.log`ged in the
+  worklet.
 - `console.log` inside the worklet does not reach the Metro console — BareKit writes it
   to the system log (`bare` identifier): `xcrun simctl spawn booted log stream` on iOS,
   `adb logcat` on Android. A worker that dies at boot therefore looks like a UI that

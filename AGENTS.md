@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Holepunch's boilerplate for Expo/React Native mobile apps with **peer-to-peer OTA
-updates** (no update server). The demo UI is trivial on purpose: the plumbing is the
-product and forks build their app on top of it. Unlike the desktop siblings, an OTA
+updates** (no update server). The stock UI is a P2P chat (same Hyperswarm topic scheme as
+pear-chat) plus OTA status; the plumbing is the product and forks build their app on top
+of it. Unlike the desktop siblings, an OTA
 here replaces the **JavaScript bundle** the app boots from — native code still ships
 through the App Store and Play Store, so this template carries a second version gate
 (`pear.json` `updates.minver`) that the desktop templates do not need.
@@ -10,7 +11,7 @@ through the App Store and Play Store, so this template carries a second version 
 Stack: Expo SDK 55 (React Native 0.83, React 19, TypeScript), `react-native-bare-kit`
 (Bare worklet), `pear-mobile` (dual export: RN side starts the worklet, Bare side owns
 the updater), `pear-runtime-react-native` (Expo config plugin + Metro config only),
-`hello-pear-worker` (the worker body), `framed-stream` + `b4a` for IPC, prettier +
+`workers/main.js` (updater + chat worklet), `framed-stream` + `b4a` for IPC, prettier +
 lunte. CI lints and runs `npm test` (format check + lint) on pushes to `main` and PRs
 targeting `main`; there are no unit tests. [README](README.md) is the human
 build/deployment manual.

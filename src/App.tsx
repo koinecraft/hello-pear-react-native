@@ -1,24 +1,48 @@
 /* global __DEV__ */
 
-import { useState, useEffect, useRef } from 'react'
-import { LinearGradient } from 'expo-linear-gradient'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { reloadAppAsync } from 'expo-modules-core'
 import { StatusBar } from 'expo-status-bar'
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
+} from 'react-native'
 import PearRuntime from 'pear-mobile'
 
 import FramedStream from 'framed-stream'
 import b4a from 'b4a'
 import bundle from './worker.bundle.js'
+import { type ChatLine, chatSendPayload, parseWorkerChatEvent } from './chat'
 import { version, upgrade, name, productName } from '../package.json'
 
 const appName = productName ?? name
 
+let lineId = 0
+function nextLineId() {
+  lineId += 1
+  return String(lineId)
+}
+
 export default function App() {
+  const [peerCount, setPeerCount] = useState(0)
+  const [lines, setLines] = useState<ChatLine[]>([])
+  const [draft, setDraft] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [applyUpdate, setApplyUpdate] = useState<(() => void) | null>(null)
   const shouldReload = useRef(false)
+  const pipeRef = useRef<FramedStream | null>(null)
+  const listRef = useRef<FlatList<ChatLine>>(null)
+
+  const appendLine = useCallback((from: string, text: string) => {
+    setLines((prev) => [...prev, { id: nextLineId(), from, text }])
+  }, [])
 
   useEffect(() => {
     const IPC = PearRuntime.run('/worker.bundle', bundle, [
@@ -28,11 +52,20 @@ export default function App() {
       appName
     ])
     const pipe = new FramedStream(IPC)
+    pipeRef.current = pipe
 
     setApplyUpdate(() => () => pipe.write('pear:applyUpdate'))
 
     pipe.on('data', (data) => {
       const parsed = b4a.toString(data)
+
+      const chatEvent = parseWorkerChatEvent(parsed)
+      if (chatEvent) {
+        if (chatEvent.type === 'peers') setPeerCount(chatEvent.count)
+        else if (chatEvent.type === 'ready') appendLine('system', 'connected to swarm')
+        else if (chatEvent.type === 'message') appendLine(chatEvent.from, chatEvent.text)
+        return
+      }
 
       if (parsed === 'updating') {
         setStatus('updating')
@@ -73,92 +106,240 @@ export default function App() {
     pipe.on('error', (err) => console.error(err))
 
     return () => {
+      pipeRef.current = null
       pipe.destroy()
     }
-  }, [])
+  }, [appendLine])
 
-  const title =
+  useEffect(() => {
+    if (lines.length === 0) return
+    listRef.current?.scrollToEnd({ animated: true })
+  }, [lines.length])
+
+  const sendMessage = () => {
+    const text = draft.trim()
+    if (!text || !pipeRef.current) return
+    setDraft('')
+    appendLine('you', text)
+    pipeRef.current.write(chatSendPayload(text))
+  }
+
+  const updateBanner =
     status === 'updating'
-      ? 'UPDATING...'
+      ? 'Updating…'
       : status === 'updated' || status === 'applying'
-        ? 'Update ready!'
+        ? 'Update ready'
         : status === 'incompatible'
-          ? `Update available on the ${Platform.OS === 'ios' ? 'App Store' : 'Play Store'}`
+          ? `Update on ${Platform.OS === 'ios' ? 'App Store' : 'Play Store'}`
           : status === 'failed'
             ? error
-            : `v${version}`
+            : null
 
   return (
-    <LinearGradient
-      colors={['#21c437', '#0e4f15']}
-      end={{ x: 1, y: 1 }}
-      start={{ x: 0, y: 0 }}
-      style={styles.container}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.root}
     >
-      <View style={styles.content}>
-        <Text style={styles.title}>{title}</Text>
-        {(status === 'updated' || status === 'applying') && (
-          <Pressable
-            disabled={status === 'applying' || !applyUpdate}
-            onPress={() => {
-              setStatus('applying')
-              try {
-                shouldReload.current = true
-                applyUpdate?.()
-              } catch (err) {
-                shouldReload.current = false
-                setError(`Update failed: ${err instanceof Error ? err.message : String(err)}`)
-                setStatus('failed')
-              }
-            }}
-            style={({ pressed }) => [
-              styles.updateButton,
-              (pressed || status === 'applying') && styles.updateButtonActive
-            ]}
-          >
-            <Text style={styles.updateButtonText}>
-              {status === 'applying' ? 'Updating...' : 'Apply update'}
-            </Text>
-          </Pressable>
-        )}
-      </View>
       <StatusBar style='light' />
-    </LinearGradient>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Pear chat</Text>
+        <View style={styles.headerMeta}>
+          <View style={styles.peerDot} />
+          <Text style={styles.peerLabel}>
+            peers: <Text style={styles.peerCount}>{peerCount}</Text>
+          </Text>
+          <Text style={styles.version}>v{version}</Text>
+        </View>
+      </View>
+
+      {updateBanner !== null && (
+        <View style={styles.updateBar}>
+          <Text style={styles.updateBarText}>{updateBanner}</Text>
+          {(status === 'updated' || status === 'applying') && (
+            <Pressable
+              disabled={status === 'applying' || !applyUpdate}
+              onPress={() => {
+                setStatus('applying')
+                try {
+                  shouldReload.current = true
+                  applyUpdate?.()
+                } catch (err) {
+                  shouldReload.current = false
+                  setError(`Update failed: ${err instanceof Error ? err.message : String(err)}`)
+                  setStatus('failed')
+                }
+              }}
+              style={({ pressed }) => [styles.applyBtn, pressed && styles.applyBtnPressed]}
+            >
+              <Text style={styles.applyBtnText}>
+                {status === 'applying' ? 'Applying…' : 'Apply'}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      <FlatList
+        ref={listRef}
+        contentContainerStyle={styles.logContent}
+        data={lines}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <View style={styles.logRow}>
+            <Text
+              style={[
+                styles.logFrom,
+                item.from === 'system' && styles.fromSystem,
+                item.from === 'you' && styles.fromYou,
+                item.from !== 'system' && item.from !== 'you' && styles.fromPeer
+              ]}
+            >
+              {item.from}:
+            </Text>
+            <Text style={styles.logText}>{item.text}</Text>
+          </View>
+        )}
+        style={styles.log}
+      />
+
+      <View style={styles.footer}>
+        <TextInput
+          onChangeText={setDraft}
+          onSubmitEditing={sendMessage}
+          placeholder='type and press enter'
+          placeholderTextColor='#71717a'
+          returnKeyType='send'
+          style={styles.input}
+          value={draft}
+        />
+      </View>
+    </KeyboardAvoidingView>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
+    backgroundColor: '#09090b'
+  },
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#27272a',
+    backgroundColor: 'rgba(24, 24, 27, 0.6)',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 56 : 16,
+    paddingBottom: 12
   },
-  content: {
-    alignItems: 'center'
+  headerTitle: {
+    color: '#fafafa',
+    fontSize: 14,
+    fontWeight: '600'
   },
-  title: {
-    color: '#fff',
-    fontSize: 48,
-    fontWeight: '700',
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 4
+  headerMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
   },
-  updateButton: {
-    marginTop: 20,
-    paddingHorizontal: 24,
+  peerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10b981'
+  },
+  peerLabel: {
+    color: '#a1a1aa',
+    fontSize: 12
+  },
+  peerCount: {
+    color: '#fafafa',
+    fontWeight: '500'
+  },
+  version: {
+    color: '#71717a',
+    fontSize: 11,
+    marginLeft: 4
+  },
+  updateBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: '#14532d',
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  updateBarText: {
+    color: '#ecfdf5',
+    fontSize: 13,
+    flex: 1
+  },
+  applyBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#fafafa'
+  },
+  applyBtnPressed: {
+    opacity: 0.85
+  },
+  applyBtnText: {
+    color: '#fafafa',
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  log: {
+    flex: 1
+  },
+  logContent: {
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderWidth: 2,
-    borderColor: '#fff',
+    gap: 4
+  },
+  logRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4
+  },
+  logFrom: {
+    fontSize: 14,
+    fontWeight: '500'
+  },
+  fromSystem: {
+    color: '#71717a',
+    fontStyle: 'italic'
+  },
+  fromYou: {
+    color: '#34d399'
+  },
+  fromPeer: {
+    color: '#38bdf8'
+  },
+  logText: {
+    color: '#fafafa',
+    fontSize: 14,
+    flexShrink: 1
+  },
+  footer: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#27272a',
+    backgroundColor: 'rgba(24, 24, 27, 0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 12
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#27272a',
     borderRadius: 8,
-    backgroundColor: '#008000'
-  },
-  updateButtonActive: {
-    backgroundColor: '#adff2f'
-  },
-  updateButtonText: {
-    color: '#fff',
-    fontSize: 18
+    backgroundColor: '#18181b',
+    color: '#fafafa',
+    fontSize: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10
   }
 })

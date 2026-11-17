@@ -1,4 +1,4 @@
-// https://github.com/holepunchto/hello-pear-worker v1.2.0
+// Based on https://github.com/holepunchto/hello-pear-worker v1.2.0 (+ P2P chat)
 
 const PearRuntime = require('pear-runtime') // pear-runtime on desktop; pear-mobile on mobile
 const Hyperswarm = require('hyperswarm')
@@ -7,6 +7,9 @@ const goodbye = require('graceful-goodbye')
 const FramedStream = require('framed-stream')
 const path = require('bare-path')
 const dir = require('bare-storage')
+const crypto = require('bare-crypto')
+const os = require('bare-os')
+const b4a = require('b4a')
 const { isBareKit } = require('which-runtime')
 
 // mobile doesn't have the executable path (argv[0])
@@ -26,7 +29,18 @@ const updaterConfig = {
 const pipe = new FramedStream(Bare.IPC)
 const store = new Corestore(path.join(updaterConfig.dir, 'pear-runtime', 'corestore'))
 const swarm = new Hyperswarm()
+const chatSwarm = new Hyperswarm()
 const pear = new PearRuntime({ ...updaterConfig, swarm, store })
+
+const chatTopic = crypto
+  .createHash('sha256')
+  .update('pear-getting-started-chat:' + os.userInfo().username)
+  .digest()
+const chatConns = []
+
+function writeChat(event) {
+  pipe.write(JSON.stringify(event))
+}
 
 pear.updater.on('error', (err) => pipe.write('updater-error ' + err.message))
 
@@ -48,7 +62,32 @@ pear.updater.on('updating', () => pipe.write('updating'))
 pear.updater.on('updated', () => pipe.write('updated'))
 pear.on('minver-required', () => pipe.write('minver-required')) // for mobile store update notification
 
+chatSwarm.on('connection', (conn) => {
+  const id = b4a.toString(conn.remotePublicKey, 'hex').slice(0, 6)
+  chatConns.push(conn)
+  writeChat({ type: 'peers', count: chatConns.length })
+
+  conn.on('data', (data) => {
+    writeChat({ type: 'message', from: id, text: b4a.toString(data) })
+  })
+
+  conn.on('error', () => {})
+  conn.once('close', () => {
+    const index = chatConns.indexOf(conn)
+    if (index !== -1) chatConns.splice(index, 1)
+    writeChat({ type: 'peers', count: chatConns.length })
+  })
+})
+
+void chatSwarm
+  .join(chatTopic, { client: true, server: true })
+  .flushed()
+  .then(() => {
+    writeChat({ type: 'ready' })
+  })
+
 goodbye(async () => {
+  await chatSwarm.destroy()
   await swarm.destroy()
   await pear.close()
   await store.close()
@@ -56,18 +95,29 @@ goodbye(async () => {
 
 pipe.on('data', async (data) => {
   const message = data.toString()
-  if (message !== 'pear:applyUpdate') {
-    pipe.write('unknown-message ' + message)
+
+  if (message === 'pear:applyUpdate') {
+    try {
+      await pear.ready()
+      await pear.updater.applyUpdate()
+      pipe.write('pear:updateApplied')
+    } catch (err) {
+      pipe.write('pear:updateFailed ' + err.message)
+    }
     return
   }
 
   try {
-    await pear.ready()
-    await pear.updater.applyUpdate()
-    pipe.write('pear:updateApplied')
-  } catch (err) {
-    pipe.write('pear:updateFailed ' + err.message)
+    const payload = JSON.parse(message)
+    if (payload.type === 'chat:send' && typeof payload.text === 'string') {
+      for (const conn of chatConns) conn.write(payload.text)
+      return
+    }
+  } catch {
+    // not JSON chat
   }
+
+  pipe.write('unknown-message ' + message)
 })
 
 pipe.write('Hello from worker')

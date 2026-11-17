@@ -23,7 +23,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.hello-pear-react-native"
+      "bundleIdentifier": "com.lcfx.hello-pear-react-native"
     },
     "android": {
       "adaptiveIcon": {
@@ -31,7 +31,7 @@
         "backgroundColor": "#ffffff"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.hellopearreactnative"
+      "package": "com.lcfx.hellopearreactnative"
     },
     "web": {
       "favicon": "./assets/favicon.png"
